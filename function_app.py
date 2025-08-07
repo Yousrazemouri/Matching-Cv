@@ -1,25 +1,43 @@
 import azure.functions as func
 import logging
+import os
+from azure.ai.openai import OpenAIClient
+from azure.identity import DefaultAzureCredential
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+
+# Configure Azure OpenAI client
+endpoint = os.getenv("https://matchingcv.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview")
+key = os.getenv("1oeKEOzukxYA0xjY6CGww4ScUNiJ7Zr5koX2HBgdYuKbV5RmsLLPJQQJ99BHAC5T7U2XJ3w3AAABACOGR86g")
+
+client = OpenAIClient(endpoint, credential=key)
 
 @app.route(route="http_triggerCvmatching")
 def http_triggerCvmatching(req: func.HttpRequest) -> func.HttpResponse:
     logging.info('Python HTTP trigger function processed a request.')
 
-    name = req.params.get('name')
-    if not name:
+    prompt = req.params.get('prompt')
+    if not prompt:
         try:
             req_body = req.get_json()
+            prompt = req_body.get('prompt')
         except ValueError:
             pass
-        else:
-            name = req_body.get('name')
 
-    if name:
-        return func.HttpResponse(f"Hello, {name}. This HTTP triggered function executed successfully.")
-    else:
+    if not prompt:
         return func.HttpResponse(
-             "This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.",
-             status_code=200
+            "Please pass a 'prompt' in the query string or in the request body",
+            status_code=400
         )
+    
+    try:
+        # Appel à Azure OpenAI
+        response = client.get_chat_completions(
+            deployment_id="your-deployment-name",  # Remplace par le nom de ton déploiement
+            messages=[{"role": "user", "content": prompt}]
+        )
+        answer = response.choices[0].message.content
+        return func.HttpResponse(answer, status_code=200)
+    except Exception as e:
+        logging.error(f"Azure OpenAI call failed: {e}")
+        return func.HttpResponse(f"Error calling Azure OpenAI: {e}", status_code=500)
