@@ -8,7 +8,7 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 # Configure Azure OpenAI client
 endpoint = os.getenv("https://matchingcv.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview")
-key = os.getenv("AZURE_OPENAI_KEY")
+key = os.getenv("1oeKEOzukxYA0xjY6CGww4ScUNiJ7Zr5koX2HBgdYuKbV5RmsLLPJQQJ99BHAC5T7U2XJ3w3AAABACOGR86g")
 
 client = OpenAIClient(endpoint, credential=key)
 
@@ -33,7 +33,7 @@ def http_triggerCvmatching(req: func.HttpRequest) -> func.HttpResponse:
     try:
         # Appel à Azure OpenAI
         response = client.get_chat_completions(
-            deployment_id="your-deployment-name",  # Remplace par le nom de ton déploiement
+            deployment_id="gpt-4o",  # Remplace par le nom de ton déploiement
             messages=[{"role": "user", "content": prompt}]
         )
         answer = response.choices[0].message.content
