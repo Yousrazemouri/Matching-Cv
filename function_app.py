@@ -8,7 +8,7 @@ app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
 # Configure Azure OpenAI client
 endpoint = os.getenv("https://matchingcv.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2025-01-01-preview")
-key = os.getenv("1oeKEOzukxYA0xjY6CGww4ScUNiJ7Zr5koX2HBgdYuKbV5RmsLLPJQQJ99BHAC5T7U2XJ3w3AAABACOGR86g")
+key = os.getenv("AZURE_OPENAI_KEY")
 
 client = OpenAIClient(endpoint, credential=key)
 
