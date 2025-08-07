@@ -5,4 +5,4 @@
 azure-functions
 openai
 azure-core
-
+azure-ai-textanalytics

@@ -6,6 +6,12 @@ from azure.core.credentials import AzureKeyCredential
 
 app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
 
+
+@app.route(route="http_triggerCvmatching")
+def main(req: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse("Hello Azure Functions!")
+
+
 # ✅ Lis les variables d'environnement définies dans Azure App Settings
 endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")  
 api_key = os.getenv("AZURE_OPENAI_KEY")   
@@ -46,6 +52,4 @@ def http_triggerCvmatching(req: func.HttpRequest) -> func.HttpResponse:
         logging.error(f"Erreur pendant l'appel OpenAI: {e}", exc_info=True)
         return func.HttpResponse(f"Erreur serveur : {str(e)}", status_code=500)
 
-# Fonction main classique Azure Functions, qui appelle http_triggerCvmatching
-def main(req: func.HttpRequest) -> func.HttpResponse:
-    return http_triggerCvmatching(req)
+
