@@ -2,8 +2,7 @@ azure-functions
  azure-ai-vision==0.15.1b1
 azure-core
 azure-ai-textanalytics
-PyMuPDF
-requests_toolbelt.multipart 
+PyMuPDF 
 pytesseract
 pillow
 requests 
