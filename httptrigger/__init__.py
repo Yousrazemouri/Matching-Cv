@@ -4,13 +4,16 @@ import os
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 import fitz  # PyMuPDF
-from requests_toolbelt.multipart import decoder
 import requests
 import json
 from collections import defaultdict
+from PIL import Image
+import pytesseract
+import io
 
 # Charger les variables d'environnement
 load_dotenv()
+pytesseract.pytesseract.tesseract_cmd = r"C:\tesseract\tesseract.exe"  # Ajuster si nécessaire
 
 # Azure OpenAI
 endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -28,154 +31,142 @@ client = AzureOpenAI(
     api_version=api_version
 )
 
-def main(req: func.HttpRequest) -> func.HttpResponse:
-    logging.info('HTTP trigger fonction appelée.')
+def extraire_texte_avec_ocr(pdf_bytes):
+    """Extrait le texte d'un PDF, avec fallback OCR si pages images."""
+    texte_total = []
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-    headers = {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-        "Access-Control-Allow-Headers": "Content-Type"
-    }
+    for page in doc:
+        texte = page.get_text()
+        if texte.strip():
+            texte_total.append(texte)
+        else:
+            pix = page.get_pixmap()
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            texte_ocr = pytesseract.image_to_string(img, lang="fra+eng")
+            texte_total.append(texte_ocr)
 
-    if req.method == "OPTIONS":
-        return func.HttpResponse(status_code=204, headers=headers)
+    return "\n".join(texte_total)
 
-    if req.method == "GET":
-        html_content = """
-        <html>
-        <head><title>Analyse de CV</title></head>
-        <body style="font-family: Arial; padding: 20px;">
-            <h2>Uploader votre CV</h2>
-            <form action="" method="post" enctype="multipart/form-data">
-                <input type="file" name="file" accept=".pdf" required>
-                <br><br>
-                <button type="submit">Analyser</button>
-            </form>
-        </body>
-        </html>
-        """
-        return func.HttpResponse(html_content, mimetype="text/html", headers=headers)
+def analyser_cv(cv_text):
+    """Analyse un CV et retourne profile_type + skills + direction avec règles métier."""
+    prompt = f"""
+Tu es un extracteur de données pour des CV.
 
-    if req.method == "POST":
-        try:
-            content_type = req.headers.get('Content-Type')
-            if not content_type or 'multipart/form-data' not in content_type:
-                return func.HttpResponse("Le contenu doit être multipart/form-data.", status_code=400, headers=headers)
+Objectif :  
+- Retourner UNIQUEMENT un objet JSON valide de la forme :  
+{{  
+  "profile_type": "...",           # Intitulé de poste précis  
+  "profile_category": "...",       # Une des valeurs suivantes : "Technique", "RH", "Finance", "Autre"  
+  "technical_skills": ["comp1","comp2",...]  # Liste des compétences techniques si "profile_category" est "Technique", sinon liste vide  
+}}
 
-            body = req.get_body()
-            multipart_data = decoder.MultipartDecoder(body, content_type)
+Consignes importantes :  
+- "profile_type" est l’intitulé de poste principal détecté dans le CV.  
+- "profile_category" doit être :  
+  - "Technique" pour les profils liés au développement, infrastructure, data, cloud, etc.  
+  - "RH" pour les profils liés aux ressources humaines, recrutement, talent acquisition, etc.  
+  - "Finance" pour les profils liés à la comptabilité, contrôle de gestion, audit, etc.  
+  - "Autre" pour tout autre métier.   
+- Pour les profils "Technique","RH","Finance", liste uniquement les compétences techniques (langages, outils, frameworks, cloud…).  
+- Ne pas inclure de soft skills ou compétences non techniques dans "technical_skills".
 
-            file_bytes = None
-            for part in multipart_data.parts:
-                if b'application/pdf' in part.headers.get(b'Content-Type', b''):
-                    file_bytes = part.content
-                    break
-
-            if not file_bytes:
-                return func.HttpResponse("Fichier PDF non trouvé.", status_code=400, headers=headers)
-
-            # Extraction du texte
-            doc = fitz.open(stream=file_bytes, filetype="pdf")
-            cv_text = "".join([page.get_text() for page in doc])
-
-            if not cv_text.strip():
-                return func.HttpResponse("Impossible d'extraire le texte du PDF.", status_code=400, headers=headers)
-
-            # ✅ Prompt enrichi
-            prompt = f"""
-Tu es un extracteur de données techniques pour des CV.
-
-Objectif :
-- Retourner UNIQUEMENT un objet JSON valide de la forme :
-{{"profile_type":"...", "technical_skills":["comp1","comp2","..."]}}
-- Pas de texte additionnel, pas de balises, pas de commentaires.
-
-Définition des champs :
-- "profile_type" : un libellé court et précis du type de profil principal déduit du CV.
-- "technical_skills" : liste des compétences techniques (langages, frameworks, bibliothèques, outils, services cloud, bases de données, systèmes, protocoles/normes, plateformes).
-
-Règles pour "profile_type" :
-- Déduis le type principal à partir des intitulés de poste, missions, réalisations et technologies dominantes (donne plus de poids aux expériences récentes).
-
-Règles pour "technical_skills" :
-- Inclure uniquement des compétences techniques (pas de soft skills, langues, diplômes, méthodes : Agile, Scrum, etc.).
-- Tu peux DÉDUIRE des compétences si l'usage est clairement impliqué par les expériences/missions.
-  Exemples :
-  • "Développement d'APIs REST en Python sur Azure Functions" → ["Python", "Azure Functions", "REST API"]
-  • "Mise en place de pipelines CI/CD avec Azure DevOps" → ["Azure DevOps", "CI/CD"]
-  • "Modèles de classification avec scikit-learn" → ["scikit-learn"]
-- N'invente rien qui ne soit pas soutenu par le texte.
-- Pas de doublons, liste plate de chaînes.
-
-Renvoie UNIQUEMENT le JSON demandé.
-
-Texte du CV :
+Texte du CV :  
 {cv_text}
 """
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        content = response.choices[0].message.content.strip()
 
-            response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=[{"role": "user", "content": prompt}]
-            )
+        if content.startswith("```"):
+            content = content.strip("`").strip()
+            if content.lower().startswith("json"):
+                content = content[4:].strip()
 
-            answer = response.choices[0].message.content
-            parsed = json.loads(answer)
-            skills = parsed["technical_skills"]
+        return json.loads(content)
 
-            # Appel Azure AI Search
-            url = f"{search_endpoint}/indexes/{search_index}/docs/search?api-version=2023-07-01-Preview"
-            query = {
-                "search": " ".join(skills),
-                "queryType": "semantic",
-                "semanticConfiguration": "rag-1754943219165-semantic-configuration",
-                "top": 5,
-                "select": "chunk,title",
-                "answers": "extractive",
-                "captions": "extractive"
-            }
-            headers_search = {
-                "Content-Type": "application/json",
-                "api-key": search_api_key
-            }
-            search_response = requests.post(url, headers=headers_search, json=query)
-            search_response.raise_for_status()
-            search_results = search_response.json()
+    except json.JSONDecodeError:
+        logging.error(f"Réponse non JSON : {content}")
+        return {"error": "Impossible de parser le JSON"}
+    except Exception as e:
+        logging.error(f"Erreur analyse CV : {e}")
+        return {"error": str(e)}
 
-            # Agrégation des directions
-            directions = []
-            for item in search_results.get("@search.answers", []):
-                text = item["text"]
-                score = item["score"]
-                start = text.find('"direction":')
-                if start != -1:
-                    start_quote = text.find('"', start + 12)
-                    end_quote = text.find('"', start_quote + 1)
-                    direction = text[start_quote + 1:end_quote]
-                    directions.append((direction, score))
+def rechercher_direction(skills):
+    """Recherche la direction la plus pertinente via Azure AI Search."""
+    try:
+        url = f"{search_endpoint}/indexes/{search_index}/docs/search?api-version=2023-07-01-Preview"
+        query = {
+            "search": " ".join(skills),
+            "queryType": "semantic",
+            "semanticConfiguration": "rag-1754943219165-semantic-configuration",
+            "top": 5,
+            "select": "chunk,title",
+            "answers": "extractive",
+            "captions": "extractive"
+        }
+        headers_search = {
+            "Content-Type": "application/json",
+            "api-key": search_api_key
+        }
+        resp = requests.post(url, headers=headers_search, json=query)
+        resp.raise_for_status()
 
-            agg = defaultdict(list)
-            for direction, score in directions:
-                agg[direction].append(score)
+        directions = []
+        for item in resp.json().get("@search.answers", []):
+            text = item["text"]
+            score = item["score"]
+            start = text.find('"direction":')
+            if start != -1:
+                start_quote = text.find('"', start + 12)
+                end_quote = text.find('"', start_quote + 1)
+                direction = text[start_quote + 1:end_quote]
+                directions.append((direction, score))
 
-            summary = "\n".join([f"{d} | Score moyen: {sum(s)/len(s):.3f}" for d, s in agg.items()])
+        if not directions:
+            return None
 
-            html_result = f"""
-            <html>
-            <head><title>Résultat de l'analyse</title></head>
-            <body style="font-family: Arial; padding: 20px;">
-                <h2>Résultat de l'analyse</h2>
-                <pre>{answer}</pre>
-                <h3>Matching avec les directions ICUBE</h3>
-                <pre>{summary}</pre>
-                <br>
-                <a href="">⬅ Retour</a>
-            </body>
-            </html>
-            """
-            return func.HttpResponse(html_result, mimetype="text/html", headers=headers)
+        agg = defaultdict(list)
+        for direction, score in directions:
+            agg[direction].append(score)
+        return max(agg.items(), key=lambda x: sum(x[1]) / len(x[1]))[0]
 
-        except Exception as e:
-            logging.error(f"Erreur pendant le traitement : {e}", exc_info=True)
-            return func.HttpResponse(f"Erreur serveur : {str(e)}", status_code=500, headers=headers)
+    except Exception as e:
+        logging.error(f"Erreur recherche direction : {e}")
+        return None
 
-    return func.HttpResponse("Méthode non autorisée", status_code=405, headers=headers)
+def main(myblob: func.InputStream):
+    """Déclenché automatiquement par l'ajout d'un fichier dans le conteneur Blob."""
+    logging.info(f"📂 Blob détecté : {myblob.name}, taille : {myblob.length} octets")
+
+    try:
+        # Lire le contenu du blob (PDF)
+        blob_data = myblob.read()
+        texte = extraire_texte_avec_ocr(blob_data)
+
+        if not texte.strip():
+            logging.warning("⚠️ Aucun texte détecté même avec OCR")
+            return
+
+        # Analyse avec Azure OpenAI
+        analyse = analyser_cv(texte)
+        if "error" in analyse:
+            logging.error(f"Erreur d'analyse pour {myblob.name}: {analyse['error']}")
+            return
+
+        # Recherche direction via Azure Search
+        direction = rechercher_direction(analyse["technical_skills"])
+
+        # Log du résultat final
+        resultat = {
+            "file": myblob.name,
+            "profile_type": analyse.get("profile_type"),
+            "direction": direction
+        }
+        logging.info(f"✅ Résultat : {json.dumps(resultat, ensure_ascii=False)}")
+
+    except Exception as e:
+        logging.error(f"❌ Erreur traitement blob {myblob.name} : {e}", exc_info=True)

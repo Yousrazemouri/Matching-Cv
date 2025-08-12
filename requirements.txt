@@ -3,3 +3,9 @@ azure-functions
 azure-core
 azure-ai-textanalytics
 PyMuPDF
+requests_toolbelt.multipart 
+pytesseract
+pillow
+requests 
+azure-storage-blob==12.18.1
+

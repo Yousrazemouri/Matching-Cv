@@ -2,17 +2,11 @@
   "scriptFile": "__init__.py",
   "bindings": [
     {
-      "authLevel": "function",
-      "type": "httpTrigger",
+      "type": "blobTrigger",
       "direction": "in",
-      "name": "req",
-      "methods": ["get", "post"],
-      "route": "http-trigger-cv-matching"
-    },
-    {
-      "type": "http",
-      "direction": "out",
-      "name": "$return"
+      "name": "myblob",
+      "path": "cv-container/{name}",
+      "connection": "AzureWebJobsStorage"
     }
   ]
 }
